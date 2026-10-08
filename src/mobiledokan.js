@@ -650,12 +650,81 @@ function extractImages($, model, pageUrl) {
 
 async function searchPhones(q) {
   try {
+    const query = normalizeModel(q);
+
+    if (!query) return [];
+
     const { data: html } = await http.get(
       `${SEARCH}${encodeURIComponent(q)}`
     );
 
     const $ = cheerio.load(html);
     const results = [];
+    const seen = new Set();
+
+    const queryWords = query
+      .split(/\s+/)
+      .filter(Boolean);
+
+    /*
+     * Brand-specific strict matching.
+     *
+     * Example:
+     * redmi -> only titles containing Redmi
+     * samsung -> Samsung/Galaxy
+     * iphone -> iPhone
+     */
+
+    const brandRules = [
+      {
+        words: ["redmi"],
+        allowed: ["redmi"]
+      },
+      {
+        words: ["poco"],
+        allowed: ["poco"]
+      },
+      {
+        words: ["iphone"],
+        allowed: ["iphone"]
+      },
+      {
+        words: ["pixel"],
+        allowed: ["pixel"]
+      },
+      {
+        words: ["samsung"],
+        allowed: ["samsung", "galaxy"]
+      },
+      {
+        words: ["galaxy"],
+        allowed: ["samsung", "galaxy"]
+      },
+      {
+        words: ["realme"],
+        allowed: ["realme"]
+      },
+      {
+        words: ["oppo"],
+        allowed: ["oppo"]
+      },
+      {
+        words: ["vivo"],
+        allowed: ["vivo"]
+      },
+      {
+        words: ["honor"],
+        allowed: ["honor"]
+      },
+      {
+        words: ["oneplus"],
+        allowed: ["oneplus", "one plus"]
+      },
+      {
+        words: ["xiaomi"],
+        allowed: ["xiaomi", "redmi", "poco"]
+      }
+    ];
 
     $("a[href]").each((_, a) => {
       const title = clean($(a).text());
@@ -671,19 +740,79 @@ async function searchPhones(q) {
         return;
       }
 
-      if (!results.some((x) => x.url === href)) {
-        results.push({
-          title,
-          url: href,
-          score: similarity(q, title)
-        });
+      const normalizedTitle = normalizeModel(title);
+
+      /*
+       * Every query word must exist in the title.
+       *
+       * redmi 10c
+       * -> title must contain "redmi"
+       * -> AND "10c"
+       */
+      const allWordsMatch = queryWords.every((word) =>
+        normalizedTitle.includes(word)
+      );
+
+      if (!allWordsMatch) return;
+
+      /*
+       * Brand protection.
+       */
+      for (const rule of brandRules) {
+        const isBrandQuery = rule.words.some((word) =>
+          query.includes(word)
+        );
+
+        if (!isBrandQuery) continue;
+
+        const validBrand = rule.allowed.some((word) =>
+          normalizedTitle.includes(word)
+        );
+
+        if (!validBrand) return;
       }
+
+      /*
+       * Prevent duplicates.
+       */
+      if (seen.has(href)) return;
+
+      seen.add(href);
+
+      results.push({
+        title,
+        url: href,
+        score: similarity(q, title)
+      });
     });
 
-    results.sort((a, b) => b.score - a.score);
+    /*
+     * Sort strongest matches first.
+     */
+    results.sort((a, b) => {
+      const aTitle = normalizeModel(a.title);
+      const bTitle = normalizeModel(b.title);
+
+      let aScore = a.score || 0;
+      let bScore = b.score || 0;
+
+      if (aTitle.startsWith(query)) aScore += 100;
+      if (bTitle.startsWith(query)) bScore += 100;
+
+      if (aTitle.includes(query)) aScore += 50;
+      if (bTitle.includes(query)) bScore += 50;
+
+      return bScore - aScore;
+    });
 
     return results.slice(0, 20);
+
   } catch (error) {
+    console.error(
+      "searchPhones error:",
+      error.message
+    );
+
     return [];
   }
 }
