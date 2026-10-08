@@ -648,171 +648,512 @@ function extractImages($, model, pageUrl) {
   return images.slice(0, 10);
 }
 
+function cleanSearchModelName(title) {
+  let name = clean(title);
+
+  // Remove price text first.
+  name = name
+    .replace(/৳\s*[\d,]+(?:\.\d+)?/g, " ")
+    .replace(/Tk\.?\s*[\d,]+(?:\.\d+)?/gi, " ")
+    .replace(/\bBDT\s*[\d,]+(?:\.\d+)?/gi, " ");
+
+  // Remove bracketed variant information.
+  name = name
+    .replace(/\([^)]*\)/g, " ")
+    .replace(/\[[^\]]*\]/g, " ");
+
+  // Remove RAM/storage variants.
+  name = name
+    .replace(/\b\d+\s*GB\s*\+\s*\d+\s*GB\b/gi, " ")
+    .replace(/\b\d+\s*GB\s*(RAM|ROM|Storage)\b/gi, " ")
+    .replace(/\b\d+\s*GB\b/gi, " ")
+    .replace(/\b\d+\s*TB\b/gi, " ");
+
+  // Remove storage suffixes such as:
+  // -512gb, -256gb, -1tb, etc.
+  name = name
+    .replace(/[-\s]\d+\s*(GB|TB)\b/gi, " ");
+
+  // Remove common region/market suffixes.
+  name = name
+    .replace(/\b(HK\/AUS|HK|AUS|China|CN|Global|India|EU|JP|US)\b/gi, " ");
+
+  // Remove common page-title words.
+  name = name
+    .replace(/\bPrice(?:\s+in\s+Bangladesh)?\b/gi, " ")
+    .replace(/\bPrice\s+Bangladesh\b/gi, " ");
+
+  name = name
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return name;
+}
+
+function searchModelKey(title) {
+  let name = cleanSearchModelName(title)
+    .toLowerCase()
+    .replace(/^xiaomi\s+/i, "")
+    .replace(/^apple\s+/i, "")
+    .replace(/^samsung\s+/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return name;
+}
+
+async function fetchBrandPage(url) {
+  try {
+    const { data: html } = await http.get(url, {
+      timeout: 15000
+    });
+
+    if (!html || typeof html !== "string") {
+      return null;
+    }
+
+    const $ = cheerio.load(html);
+
+    let mobileCount = 0;
+    $("a[href]").each((_, a) => {
+      const href = absoluteUrl($(a).attr("href"));
+      if (
+        href &&
+        /^https?:\/\/(www\.)?mobiledokan\.com\/mobile\//i.test(href)
+      ) {
+        mobileCount++;
+      }
+    });
+
+    return mobileCount > 0 ? html : null;
+  } catch {
+    return null;
+  }
+}
+
 async function searchPhones(q) {
   try {
     const query = normalizeModel(q);
-
     if (!query) return [];
 
-    const { data: html } = await http.get(
-      `${SEARCH}${encodeURIComponent(q)}`
-    );
-
-    const $ = cheerio.load(html);
-    const results = [];
-    const seen = new Set();
-
-    const queryWords = query
-      .split(/\s+/)
-      .filter(Boolean);
+    const queryWords = query.split(/\s+/).filter(Boolean);
 
     /*
-     * Brand-specific strict matching.
-     *
-     * Example:
-     * redmi -> only titles containing Redmi
-     * samsung -> Samsung/Galaxy
-     * iphone -> iPhone
+     * MobileDokan uses different brand routes.
+     * We try the proper mobile-brand route first, then legacy/simple
+     * routes where applicable.
      */
+    const brandPages = {
+      samsung: [
+        `${BASE}/mobile-brand/samsung`,
+        `${BASE}/samsung`
+      ],
 
-    const brandRules = [
-      {
-        words: ["redmi"],
-        allowed: ["redmi"]
-      },
-      {
-        words: ["poco"],
-        allowed: ["poco"]
-      },
-      {
-        words: ["iphone"],
-        allowed: ["iphone"]
-      },
-      {
-        words: ["pixel"],
-        allowed: ["pixel"]
-      },
-      {
-        words: ["samsung"],
-        allowed: ["samsung", "galaxy"]
-      },
-      {
-        words: ["galaxy"],
-        allowed: ["samsung", "galaxy"]
-      },
-      {
-        words: ["realme"],
-        allowed: ["realme"]
-      },
-      {
-        words: ["oppo"],
-        allowed: ["oppo"]
-      },
-      {
-        words: ["vivo"],
-        allowed: ["vivo"]
-      },
-      {
-        words: ["honor"],
-        allowed: ["honor"]
-      },
-      {
-        words: ["oneplus"],
-        allowed: ["oneplus", "one plus"]
-      },
-      {
-        words: ["xiaomi"],
-        allowed: ["xiaomi", "redmi", "poco"]
+      apple: [
+        `${BASE}/mobile-brand/apple`,
+        `${BASE}/apple`
+      ],
+
+      iphone: [
+        `${BASE}/mobile-brand/apple`,
+        `${BASE}/apple`
+      ],
+
+      xiaomi: [
+        `${BASE}/xiaomi`,
+        `${BASE}/mobile-brand/xiaomi`
+      ],
+
+      redmi: [
+        `${BASE}/xiaomi`,
+        `${BASE}/mobile-brand/xiaomi`
+      ],
+
+      poco: [
+        `${BASE}/xiaomi`,
+        `${BASE}/mobile-brand/xiaomi`
+      ],
+
+      vivo: [
+        `${BASE}/mobile-brand/vivo`,
+        `${BASE}/vivo`
+      ],
+
+      oppo: [
+        `${BASE}/mobile-brand/oppo`,
+        `${BASE}/oppo`
+      ],
+
+      realme: [
+        `${BASE}/mobile-brand/realme`,
+        `${BASE}/realme`
+      ],
+
+      honor: [
+        `${BASE}/mobile-brand/honor`,
+        `${BASE}/honor`
+      ],
+
+      oneplus: [
+        `${BASE}/mobile-brand/oneplus`,
+        `${BASE}/oneplus`
+      ],
+
+      pixel: [
+        `${BASE}/mobile-brand/google`,
+        `${BASE}/google`
+      ],
+
+      google: [
+        `${BASE}/mobile-brand/google`,
+        `${BASE}/google`
+      ],
+
+      motorola: [
+        `${BASE}/mobile-brand/motorola`,
+        `${BASE}/motorola`
+      ],
+
+      nokia: [
+        `${BASE}/mobile-brand/nokia`,
+        `${BASE}/nokia`
+      ],
+
+      tecno: [
+        `${BASE}/mobile-brand/tecno`,
+        `${BASE}/tecno`
+      ],
+
+      infinix: [
+        `${BASE}/mobile-brand/infinix`,
+        `${BASE}/infinix`
+      ],
+
+      itel: [
+        `${BASE}/mobile-brand/itel`,
+        `${BASE}/itel`
+      ],
+
+      huawei: [
+        `${BASE}/mobile-brand/huawei`,
+        `${BASE}/huawei`
+      ],
+
+      asus: [
+        `${BASE}/mobile-brand/asus`,
+        `${BASE}/asus`
+      ]
+    };
+
+    let sourceUrl = null;
+    let html = null;
+
+    /*
+     * Detect the brand from the query.
+     */
+    const brandKeys = Object.keys(brandPages);
+
+    for (const brand of brandKeys) {
+      if (
+        query === brand ||
+        query.startsWith(`${brand} `) ||
+        query.includes(` ${brand} `)
+      ) {
+        for (const candidate of brandPages[brand]) {
+          html = await fetchBrandPage(candidate);
+
+          if (html) {
+            sourceUrl = candidate;
+            break;
+          }
+        }
+
+        if (html) break;
       }
-    ];
+    }
+
+    /*
+     * Brand-page discovery.
+     */
+    if (html) {
+      const $ = cheerio.load(html);
+      const results = [];
+      const seenUrls = new Set();
+      const seenModels = new Set();
+
+      $("a[href]").each((_, a) => {
+        const href = absoluteUrl($(a).attr("href"));
+
+        if (!href) return;
+
+        if (
+          !/^https?:\/\/(www\.)?mobiledokan\.com\/mobile\//i.test(href)
+        ) {
+          return;
+        }
+
+        if (seenUrls.has(href)) return;
+
+        const rawTitle =
+          clean($(a).attr("title")) ||
+          clean($(a).text()) ||
+          clean($(a).find("h2, h3, h4").text());
+
+        if (!rawTitle) return;
+
+        const normalizedTitle = normalizeModel(rawTitle);
+
+        /*
+         * Every query word must exist in the model title.
+         */
+        const allWordsMatch = queryWords.every(word =>
+          normalizedTitle.includes(word)
+        );
+
+        if (!allWordsMatch) return;
+
+        /*
+         * Brand protection.
+         */
+        if (
+          query.includes("redmi") &&
+          !normalizedTitle.includes("redmi")
+        ) {
+          return;
+        }
+
+        if (
+          query.includes("poco") &&
+          !normalizedTitle.includes("poco")
+        ) {
+          return;
+        }
+
+        if (
+          query.includes("samsung") &&
+          !normalizedTitle.includes("samsung")
+        ) {
+          return;
+        }
+
+        if (
+          (query.includes("iphone") || query.includes("apple")) &&
+          !normalizedTitle.includes("iphone")
+        ) {
+          return;
+        }
+
+        if (
+          query.includes("vivo") &&
+          !normalizedTitle.includes("vivo")
+        ) {
+          return;
+        }
+
+        if (
+          query.includes("oppo") &&
+          !normalizedTitle.includes("oppo")
+        ) {
+          return;
+        }
+
+        if (
+          query.includes("realme") &&
+          !normalizedTitle.includes("realme")
+        ) {
+          return;
+        }
+
+        if (
+          query.includes("honor") &&
+          !normalizedTitle.includes("honor")
+        ) {
+          return;
+        }
+
+        if (
+          query.includes("oneplus") &&
+          !normalizedTitle.replace(/\s+/g, "").includes("oneplus")
+        ) {
+          return;
+        }
+
+        /*
+         * Xiaomi search includes Xiaomi + Redmi + Poco.
+         */
+        if (
+          query === "xiaomi" &&
+          !(
+            normalizedTitle.includes("xiaomi") ||
+            normalizedTitle.includes("redmi") ||
+            normalizedTitle.includes("poco")
+          )
+        ) {
+          return;
+        }
+
+        /*
+         * Convert:
+         * Xiaomi Redmi 10C (4GB+64GB)
+         * Xiaomi Redmi 10C (4GB+128GB)
+         *
+         * into:
+         * Redmi 10C
+         */
+        /*
+         * Remove price before cleaning/dedup.
+         *
+         * Examples:
+         * Redmi Note 17 ৳.36,999
+         * Redmi Note 17 ৳.32,999
+         * Samsung Galaxy A17 ৳.29,999
+         *
+         * All become the same model name.
+         */
+        let displayName = rawTitle
+          .replace(/৳\s*\.?\s*[\d,]+(?:\.\d+)?/gi, " ")
+          .replace(/Tk\.?\s*[\d,]+(?:\.\d+)?/gi, " ")
+          .replace(/BDT\s*[\d,]+(?:\.\d+)?/gi, " ")
+          .replace(/\s+/g, " ")
+          .trim();
+
+        displayName = cleanSearchModelName(displayName);
+
+        /*
+         * Remove manufacturer prefix for cleaner output.
+         */
+        displayName = displayName
+          .replace(/^xiaomi\s+/i, "")
+          .replace(/^apple\s+/i, "")
+          .replace(/\s+/g, " ")
+          .trim();
+
+        if (!displayName) return;
+
+        const modelKey = searchModelKey(displayName);
+
+        /*
+         * Duplicate model protection.
+         */
+        if (seenModels.has(modelKey)) return;
+
+        seenUrls.add(href);
+        seenModels.add(modelKey);
+
+        results.push({
+          title: displayName,
+          url: href,
+          score: similarity(q, displayName)
+        });
+      });
+
+      /*
+       * Better ranking:
+       * exact/starts-with models first, then similarity.
+       */
+      results.sort((a, b) => {
+        const aTitle = normalizeModel(a.title);
+        const bTitle = normalizeModel(b.title);
+
+        let aScore = a.score || 0;
+        let bScore = b.score || 0;
+
+        if (aTitle === query) aScore += 1000;
+        if (bTitle === query) bScore += 1000;
+
+        if (aTitle.startsWith(query)) aScore += 300;
+        if (bTitle.startsWith(query)) bScore += 300;
+
+        if (aTitle.includes(query)) aScore += 100;
+        if (bTitle.includes(query)) bScore += 100;
+
+        return bScore - aScore;
+      });
+
+      return results.slice(0, 100);
+    }
+
+    /*
+     * Fallback: MobileDokan WordPress search.
+     */
+    const { data: fallbackHtml } = await http.get(
+      `${SEARCH}${encodeURIComponent(q)}`,
+      { timeout: 15000 }
+    );
+
+    const $ = cheerio.load(fallbackHtml);
+    const results = [];
+    const seenModels = new Set();
+    const seenUrls = new Set();
 
     $("a[href]").each((_, a) => {
-      const title = clean($(a).text());
       const href = absoluteUrl($(a).attr("href"));
 
-      if (!title || !href) return;
+      if (!href) return;
 
       if (
-        !/^https?:\/\/(www\.)?mobiledokan\.com\/mobile\//i.test(
-          href
-        )
+        !/^https?:\/\/(www\.)?mobiledokan\.com\/mobile\//i.test(href)
       ) {
         return;
       }
 
-      const normalizedTitle = normalizeModel(title);
+      if (seenUrls.has(href)) return;
 
-      /*
-       * Every query word must exist in the title.
-       *
-       * redmi 10c
-       * -> title must contain "redmi"
-       * -> AND "10c"
-       */
-      const allWordsMatch = queryWords.every((word) =>
+      const rawTitle =
+        clean($(a).attr("title")) ||
+        clean($(a).text()) ||
+        clean($(a).find("h2, h3, h4").text());
+
+      if (!rawTitle) return;
+
+      const normalizedTitle = normalizeModel(rawTitle);
+
+      const allWordsMatch = queryWords.every(word =>
         normalizedTitle.includes(word)
       );
 
       if (!allWordsMatch) return;
 
       /*
-       * Brand protection.
+       * Remove price before cleaning/dedup.
+       * Example:
+       * Redmi Note 17 ৳.36,999 -> Redmi Note 17
        */
-      for (const rule of brandRules) {
-        const isBrandQuery = rule.words.some((word) =>
-          query.includes(word)
-        );
+      let displayName = rawTitle
+        .replace(/৳\s*\.?\s*[\d,]+(?:\.\d+)?/gi, " ")
+        .replace(/Tk\.?\s*[\d,]+(?:\.\d+)?/gi, " ")
+        .replace(/BDT\s*[\d,]+(?:\.\d+)?/gi, " ")
+        .replace(/\s+/g, " ")
+        .trim();
 
-        if (!isBrandQuery) continue;
+      displayName = cleanSearchModelName(displayName)
+        .replace(/^xiaomi\s+/i, "")
+        .replace(/^apple\s+/i, "")
+        .replace(/\s+/g, " ")
+        .trim();
 
-        const validBrand = rule.allowed.some((word) =>
-          normalizedTitle.includes(word)
-        );
+      if (!displayName) return;
 
-        if (!validBrand) return;
-      }
+      const modelKey = searchModelKey(displayName);
 
-      /*
-       * Prevent duplicates.
-       */
-      if (seen.has(href)) return;
+      if (seenModels.has(modelKey)) return;
 
-      seen.add(href);
+      seenModels.add(modelKey);
+      seenUrls.add(href);
 
       results.push({
-        title,
+        title: displayName,
         url: href,
-        score: similarity(q, title)
+        score: similarity(q, displayName)
       });
     });
 
-    /*
-     * Sort strongest matches first.
-     */
-    results.sort((a, b) => {
-      const aTitle = normalizeModel(a.title);
-      const bTitle = normalizeModel(b.title);
+    results.sort((a, b) => b.score - a.score);
 
-      let aScore = a.score || 0;
-      let bScore = b.score || 0;
-
-      if (aTitle.startsWith(query)) aScore += 100;
-      if (bTitle.startsWith(query)) bScore += 100;
-
-      if (aTitle.includes(query)) aScore += 50;
-      if (bTitle.includes(query)) bScore += 50;
-
-      return bScore - aScore;
-    });
-
-    return results.slice(0, 20);
+    return results.slice(0, 100);
 
   } catch (error) {
-    console.error(
-      "searchPhones error:",
-      error.message
-    );
-
+    console.error("searchPhones error:", error.message);
     return [];
   }
 }

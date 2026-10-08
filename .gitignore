@@ -1,3 +1,7 @@
 node_modules/
 .env
 npm-debug.log*
+src/mobiledokan.js.bak
+src/mobiledokan.js.before-dedup
+src/mobiledokan.js.before-final-dedup
+src/mobiledokan.js.redmi-working
