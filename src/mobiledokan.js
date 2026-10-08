@@ -648,6 +648,27 @@ function extractImages($, model, pageUrl) {
   return images.slice(0, 10);
 }
 
+
+function extractPrice(text) {
+  const value = String(text || "");
+
+  const match = value.match(
+    /৳\s*\.?\s*([\d,]+(?:\.\d+)?)/i
+  );
+
+  if (!match) {
+    return null;
+  }
+
+  const number = Number(
+    match[1].replace(/,/g, "")
+  );
+
+  return Number.isFinite(number)
+    ? number
+    : null;
+}
+
 function cleanSearchModelName(title) {
   let name = clean(title);
 
@@ -1043,7 +1064,8 @@ async function searchPhones(q) {
         results.push({
           title: displayName,
           url: href,
-          score: similarity(q, displayName)
+          score: similarity(q, displayName),
+          price: extractPrice(rawTitle)
         });
       });
 
@@ -1070,7 +1092,12 @@ async function searchPhones(q) {
         return bScore - aScore;
       });
 
-      return results.slice(0, 100);
+      return results.slice(0, 100).map(item => ({
+      title: item.title,
+      url: item.url,
+      score: item.score,
+      price: item.price ?? null
+    }));
     }
 
     /*

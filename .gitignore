@@ -5,3 +5,6 @@ src/mobiledokan.js.bak
 src/mobiledokan.js.before-dedup
 src/mobiledokan.js.before-final-dedup
 src/mobiledokan.js.redmi-working
+
+# Local backup files
+src/mobiledokan*.backup*
